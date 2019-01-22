@@ -2,7 +2,7 @@ package pack
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -15,8 +15,6 @@ import (
 const (
 	// ChartfileName is the default Chart file name.
 	ChartfileName = "Chart.yaml"
-	// DockerfileName is the name of the Dockerfile.
-	DockerfileName = "Dockerfile"
 	// ValuesfileName is the default values file name.
 	ValuesfileName = "values.yaml"
 	// IgnorefileName is the name of the Helm ignore file.
@@ -36,18 +34,25 @@ const (
 	// ChartsDir is the directory name for the packaged chart.
 	// This also doubles as the directory name for chart dependencies.
 	ChartsDir = "charts"
-	// HerokuLicenseName is the name of the Neroku License
-	HerokuLicenseName = "NOTICE"
-	// DockerignoreName is the name of the Docker ignore file
-	DockerignoreName = ".dockerignore"
+	//TasksFileName is the name of the tasks file in a draft pack
+	TasksFileName = "tasks.toml"
+	//TargetTasksFileName is the name of the file where the tasks file from the
+	//  draft pack will be copied to
+	TargetTasksFileName = ".draft-tasks.toml"
 )
+
+// File defines a file inside the pack that will be installed
+type File struct {
+	file io.ReadCloser
+	perm os.FileMode
+}
 
 // Pack defines a Draft Starter Pack.
 type Pack struct {
 	// Chart is the Helm chart to be installed with the Pack.
 	Chart *chart.Chart
-	// Dockerfile is the pre-defined Dockerfile that will be installed with the Pack.
-	Dockerfile []byte
+	// Files are the files inside the Pack that will be installed.
+	Files map[string]File
 }
 
 // SaveDir saves a pack as files in a directory.
@@ -61,15 +66,54 @@ func (p *Pack) SaveDir(dest string) error {
 		return err
 	}
 
-	// save Dockerfile
-	dockerfilePath := filepath.Join(dest, DockerfileName)
-	exists, err := osutil.Exists(dockerfilePath)
+	// create a tasks file
+	tasksFilePath := filepath.Join(dest, TargetTasksFileName)
+	exists, err := osutil.Exists(tasksFilePath)
 	if err != nil {
 		return err
 	}
 	if !exists {
-		if err := ioutil.WriteFile(dockerfilePath, p.Dockerfile, 0644); err != nil {
+		f, ok := p.Files[TasksFileName]
+		if ok {
+			newfile, err := os.Create(tasksFilePath)
+			if err != nil {
+				return err
+			}
+			defer newfile.Close()
+			defer f.file.Close()
+			io.Copy(newfile, f.file)
+			os.Chmod(tasksFilePath, f.perm)
+		} else {
+			tasksFile, err := os.Create(tasksFilePath)
+			if err != nil {
+				return err
+			}
+			tasksFile.Close()
+		}
+	}
+
+	delete(p.Files, TasksFileName)
+
+	// save the rest of the files
+	for relPath, f := range p.Files {
+		path := filepath.Join(dest, relPath)
+		exists, err := osutil.Exists(path)
+		if err != nil {
 			return err
+		}
+		if !exists {
+			baseDir := filepath.Dir(path)
+			if os.MkdirAll(baseDir, 0755) != nil {
+				return fmt.Errorf("Error creating directory %v: %v", baseDir, err)
+			}
+			newfile, err := os.Create(path)
+			if err != nil {
+				return err
+			}
+			defer newfile.Close()
+			defer f.file.Close()
+			io.Copy(newfile, f.file)
+			os.Chmod(path, f.perm)
 		}
 	}
 

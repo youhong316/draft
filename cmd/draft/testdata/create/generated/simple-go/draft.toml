@@ -2,6 +2,9 @@
   [environments.development]
     name = "myapp"
     namespace = "default"
-    wait = false
+    wait = true
     watch = false
     watch-delay = 2
+    auto-connect = false
+    dockerfile = "Dockerfile"
+    chart = ""

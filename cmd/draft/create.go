@@ -6,7 +6,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -93,18 +92,30 @@ func (c *createCmd) run() error {
 
 	if c.pack != "" {
 		// --pack was explicitly defined, so we can just lazily use that here. No detection required.
-		lpack := filepath.Join(c.home.Packs(), c.pack)
-		err = pack.CreateFrom(c.dest, lpack)
+		packsFound, err := pack.Find(c.home.Packs(), c.pack)
 		if err != nil {
 			return err
 		}
+		if len(packsFound) == 0 {
+			return fmt.Errorf("No packs found with name %s", c.pack)
+
+		} else if len(packsFound) == 1 {
+			packSrc := packsFound[0]
+			if err = pack.CreateFrom(c.dest, packSrc, c.appName); err != nil {
+				return err
+			}
+
+		} else {
+			return fmt.Errorf("Multiple packs named %s found: %v", c.pack, packsFound)
+		}
+
 	} else {
 		// pack detection time
 		packPath, err := doPackDetection(c.home, c.out)
 		if err != nil {
 			return err
 		}
-		err = pack.CreateFrom(c.dest, packPath)
+		err = pack.CreateFrom(c.dest, packPath, c.appName)
 		if err != nil {
 			return err
 		}
@@ -177,7 +188,7 @@ func doPackDetection(home draftpath.Home, out io.Writer) (string, error) {
 		detectedLang := linguist.Alias(lang)
 		fmt.Fprintf(out, "--> Draft detected %s (%f%%)\n", detectedLang.Language, detectedLang.Percent)
 		for _, repository := range repo.FindRepositories(home.Packs()) {
-			packDir := path.Join(repository.Dir, repo.PackDirName)
+			packDir := filepath.Join(repository.Dir, repo.PackDirName)
 			packs, err := ioutil.ReadDir(packDir)
 			if err != nil {
 				return "", fmt.Errorf("there was an error reading %s: %v", packDir, err)

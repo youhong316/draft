@@ -2,7 +2,8 @@ package cmdline
 
 import (
 	"fmt"
-	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,6 +36,9 @@ func (cli *cmdline) Init(rootctx context.Context, opts ...Option) {
 	DefaultOpts()(&cli.opts)
 	for _, opt := range opts {
 		opt(&cli.opts)
+	}
+	if !consoleSupportsColor() {
+		NoColor()(&cli.opts)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -73,13 +77,18 @@ func (cli *cmdline) Stop() error {
 // draft state machine.
 func Display(ctx context.Context, app string, summaries <-chan *builder.Summary, opts ...Option) {
 	var cli cmdline
-	cli.Init(ctx, WithStdout(os.Stdout))
+	cli.Init(ctx, opts...)
 
-	fmt.Fprintf(cli.opts.stdout, "%s: '%s'\n", blue("Draft Up Started"), cyan(app))
+	fmt.Fprintf(cli.opts.stdout, "%s: '%s': %s\n",
+		blue("Draft Up Started"),
+		cyan(app),
+		yellow(cli.opts.buildID),
+	)
 	ongoing := make(map[string]chan builder.SummaryStatusCode)
 	var (
-		wg sync.WaitGroup
-		id string
+		wg     sync.WaitGroup
+		id     string
+		failed bool
 	)
 	defer func() {
 		for _, c := range ongoing {
@@ -87,8 +96,14 @@ func Display(ctx context.Context, app string, summaries <-chan *builder.Summary,
 		}
 		cli.Stop()
 		wg.Wait()
-		fmt.Fprintf(cli.opts.stdout, "%s: %s: %s\n", cyan(app), blue("Build ID"), yellow(id))
-		fmt.Fprintf(cli.opts.stdout, "%s `%s`\n", blue("Inspect the logs with"), yellow("draft logs ", id))
+
+		logText := fmt.Sprintf("%s `%s`\n", blue("Inspect the logs with"), yellow("draft logs ", id))
+
+		if failed {
+			fmt.Fprintf(cli.opts.stderr, logText)
+		} else {
+			fmt.Fprintf(cli.opts.stdout, logText)
+		}
 	}()
 	for {
 		select {
@@ -98,6 +113,9 @@ func Display(ctx context.Context, app string, summaries <-chan *builder.Summary,
 			}
 			if id == "" {
 				id = summary.BuildID
+			}
+			if summary.StatusCode == builder.SummaryFailure {
+				failed = true
 			}
 			if ch, ok := ongoing[summary.StageDesc]; !ok {
 				ch = make(chan builder.SummaryStatusCode, 1)
@@ -119,29 +137,29 @@ func Display(ctx context.Context, app string, summaries <-chan *builder.Summary,
 
 func progress(cli *cmdline, app, desc string, codes <-chan builder.SummaryStatusCode) {
 	start := time.Now()
-	done := make(chan string, 1)
+	done := make(chan builder.SummaryStatusCode, 1)
 	go func() {
 		defer close(done)
 		for code := range codes {
-			switch code {
-			case builder.SummarySuccess:
-				done <- fmt.Sprintf("%s: %s  (%.4fs)\n", cyan(app), passStr(desc), time.Since(start).Seconds())
-				return
-			case builder.SummaryFailure:
-				done <- fmt.Sprintf("%s: %s  (%.4fs)\n", cyan(app), failStr(desc), time.Since(start).Seconds())
-				return
+			if code == builder.SummarySuccess || code == builder.SummaryFailure {
+				done <- code
 			}
 		}
-		done <- "\n"
 	}()
 	m := fmt.Sprintf("%s: %s", cyan(app), yellow(desc))
 	s := `-\|/-`
 	i := 0
 	for {
 		select {
-		case msg := <-done:
-			fmt.Fprintf(cli.opts.stdout, "\r%s", msg)
-			return
+		case code := <-done:
+			switch code {
+			case builder.SummarySuccess:
+				fmt.Fprintf(cli.opts.stdout, "\r%s: %s  (%.4fs)\n", cyan(app), passStr(desc, cli.opts.displayEmoji), time.Since(start).Seconds())
+				return
+			case builder.SummaryFailure:
+				fmt.Fprintf(cli.opts.stderr, "\r%s: %s  (%.4fs)\n", cyan(app), failStr(desc, cli.opts.displayEmoji), time.Since(start).Seconds())
+				return
+			}
 		default:
 			fmt.Fprintf(cli.opts.stdout, "\r%s %c", m, s[i%len(s)])
 			time.Sleep(50 * time.Millisecond)
@@ -150,12 +168,26 @@ func progress(cli *cmdline, app, desc string, codes <-chan builder.SummaryStatus
 	}
 }
 
-func passStr(msg string) string {
-	const pass = "SUCCESS " + "⚓"
-	return fmt.Sprintf("%s: %s", green(msg), pass)
+func passStr(msg string, displayEmoji bool) string {
+	return fmt.Sprintf("%s: %s", green(msg), concatStrAndEmoji("SUCCESS", " ⚓ ", displayEmoji))
 }
 
-func failStr(msg string) string {
-	const fail = "FAIL " + "❌"
-	return fmt.Sprintf("%s: %s", red(msg), fail)
+func failStr(msg string, displayEmoji bool) string {
+	return fmt.Sprintf("%s: %s", red(msg), concatStrAndEmoji("FAIL", " ❌ ", displayEmoji))
+}
+
+func concatStrAndEmoji(text string, emoji string, displayEmoji bool) string {
+	var concatStr strings.Builder
+	concatStr.WriteString(text)
+	if displayEmoji {
+		concatStr.WriteString(emoji)
+	}
+	return concatStr.String()
+}
+
+func consoleSupportsColor() bool {
+	// We could try to detect the shell in use (and the mode for the Windows
+	// console), and see if it accepts VT100 escape sequences, but this is
+	// a good enough heuristic to start with!
+	return runtime.GOOS != "windows"
 }

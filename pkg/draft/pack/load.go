@@ -3,6 +3,7 @@ package pack
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
 	"path/filepath"
 
 	"k8s.io/helm/pkg/chartutil"
@@ -14,6 +15,7 @@ import (
 // and hand off to the appropriate pack reader.
 func FromDir(dir string) (*Pack, error) {
 	pack := new(Pack)
+	pack.Files = make(map[string]File)
 
 	topdir, err := filepath.Abs(dir)
 	if err != nil {
@@ -25,11 +27,68 @@ func FromDir(dir string) (*Pack, error) {
 		return nil, err
 	}
 
-	dockerfile := filepath.Join(topdir, DockerfileName)
-	pack.Dockerfile, err = ioutil.ReadFile(dockerfile)
+	files, err := ioutil.ReadDir(topdir)
 	if err != nil {
-		return nil, fmt.Errorf("error reading %s: %s", dockerfile, err)
+		return nil, fmt.Errorf("error reading %s: %s", topdir, err)
+	}
+
+	// load all files in pack directory
+	for _, fInfo := range files {
+		if !fInfo.IsDir() {
+			f, err := os.Open(filepath.Join(topdir, fInfo.Name()))
+			if err != nil {
+				return nil, err
+			}
+			if fInfo.Name() != "README.md" {
+				pack.Files[fInfo.Name()] = File{f, fInfo.Mode().Perm()}
+			}
+		} else {
+			if fInfo.Name() != "charts" {
+				packFiles, err := extractFiles(filepath.Join(topdir, fInfo.Name()), "")
+				if err != nil {
+					return nil, err
+				}
+				for k, packFile := range packFiles {
+					pack.Files[k] = packFile
+				}
+			}
+		}
 	}
 
 	return pack, nil
+}
+
+func extractFiles(dir, base string) (map[string]File, error) {
+	baseDir := filepath.Join(base, filepath.Base(dir))
+	packFiles := make(map[string]File)
+
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	files, err := ioutil.ReadDir(absDir)
+	if err != nil {
+		return packFiles, fmt.Errorf("error reading %s: %s", dir, err)
+	}
+
+	for _, fInfo := range files {
+		if !fInfo.IsDir() {
+			fPath := filepath.Join(dir, fInfo.Name())
+			f, err := os.Open(fPath)
+			if err != nil {
+				return nil, err
+			}
+			packFiles[filepath.Join(baseDir, fInfo.Name())] = File{f, fInfo.Mode().Perm()}
+		} else {
+			nestedFiles, err := extractFiles(filepath.Join(dir, fInfo.Name()), baseDir)
+			if err != nil {
+				return nil, err
+			}
+			for k, v := range nestedFiles {
+				packFiles[k] = v
+			}
+		}
+	}
+	return packFiles, nil
 }

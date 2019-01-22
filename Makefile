@@ -1,10 +1,17 @@
 DOCKER_REGISTRY ?= docker.io
 IMAGE_PREFIX    ?= microsoft
 IMAGE_TAG       ?= canary
-SHORT_NAME      ?= draft
 TARGETS         = darwin/amd64 linux/amd64 linux/386 linux/arm windows/amd64
 DIST_DIRS       = find * -type d -exec
 APP             = draft
+INSTALL_DIR     := /usr/local/bin
+PROJECT         := draft
+
+ifeq ($(OS),Windows_NT)
+	TARGET = $(PROJECT).exe
+else
+	TARGET = $(PROJECT)
+endif
 
 # go option
 GO        ?= go
@@ -13,6 +20,7 @@ TESTS     := .
 TESTFLAGS :=
 LDFLAGS   :=
 GOFLAGS   :=
+GOXFLAGS  :=
 BINDIR    := $(CURDIR)/bin
 BINARIES  := draft
 
@@ -30,7 +38,7 @@ build:
 .PHONY: build-cross
 build-cross: LDFLAGS += -extldflags "-static"
 build-cross:
-	CGO_ENABLED=0 gox -output="_dist/{{.OS}}-{{.Arch}}/{{.Dir}}" -osarch='$(TARGETS)' $(GOFLAGS) -tags '$(TAGS)' -ldflags '$(LDFLAGS)' github.com/Azure/draft/cmd/$(APP)
+	CGO_ENABLED=0 gox -output="_dist/{{.OS}}-{{.Arch}}/{{.Dir}}" -osarch='$(TARGETS)' $(GOFLAGS) -tags '$(TAGS)' -ldflags '$(LDFLAGS)' $(GOXFLAGS) github.com/Azure/draft/cmd/$(APP)
 
 .PHONY: dist
 dist:
@@ -38,12 +46,13 @@ dist:
 		cd _dist && \
 		$(DIST_DIRS) cp ../LICENSE {} \; && \
 		$(DIST_DIRS) cp ../README.md {} \; && \
-		$(DIST_DIRS) tar -zcf draft-${VERSION}-{}.tar.gz {} \; \
+		$(DIST_DIRS) tar -zcf draft-${VERSION}-{}.tar.gz {} \; && \
+		$(DIST_DIRS) zip -r draft-${VERSION}-{}.zip {} \; \
 	)
 
 .PHONY: checksum
 checksum:
-	for f in _dist/*.gz ; do \
+	for f in _dist/*.{gz,zip} ; do \
 		shasum -a 256 "$${f}"  | awk '{print $$1}' > "$${f}.sha256" ; \
 	done
 
@@ -52,6 +61,10 @@ clean:
 	-rm bin/*
 	-rm rootfs/bin/*
 	-rm -rf _dist/
+
+.PHONY: install
+install:
+	install $(BINDIR)/$(TARGET) $(INSTALL_DIR)
 
 .PHONY: test
 test: TESTFLAGS += -race -v
@@ -93,7 +106,5 @@ ifndef HAS_BINDATA
 	go get github.com/jteeuwen/go-bindata/...
 endif
 	dep ensure -v
-	scripts/setup-apimachinery.sh
-	scripts/setup-protobuf-include.sh
 
 include versioning.mk

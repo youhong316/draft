@@ -49,7 +49,7 @@ func TestManuallyProcessArgs(t *testing.T) {
 func TestLoadPlugins(t *testing.T) {
 	// Set draft home to point to testdata
 	old := draftHome
-	draftHome = "testdata/drafthome"
+	draftHome = filepath.Join("testdata", "drafthome")
 	resetEnvVars := unsetEnvVars()
 	defer func() {
 		draftHome = old
@@ -140,7 +140,8 @@ func TestLoadPlugins(t *testing.T) {
 
 func TestSetupEnv(t *testing.T) {
 	name := "pequod"
-	ph := draftpath.Home("testdata/drafthome")
+	ver := "0.1.0"
+	ph := draftpath.Home(filepath.Join("testdata", "drafthome"))
 	base := filepath.Join(ph.Plugins(), name)
 	plugdirs := ph.Plugins()
 	flagDebug = true
@@ -150,12 +151,13 @@ func TestSetupEnv(t *testing.T) {
 
 	resetEnvVars := unsetEnvVars()
 	defer resetEnvVars()
-	setupPluginEnv(name, base, plugdirs, ph)
+	setupPluginEnv(name, ver, base, plugdirs, ph)
 	for _, tt := range []struct {
 		name   string
 		expect string
 	}{
 		{"DRAFT_PLUGIN_NAME", name},
+		{"DRAFT_PLUGIN_VERSION", ver},
 		{"DRAFT_PLUGIN_DIR", base},
 		{"DRAFT_PLUGIN", ph.Plugins()},
 		{"DRAFT_DEBUG", "1"},

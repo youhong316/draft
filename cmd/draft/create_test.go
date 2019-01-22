@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -17,30 +17,30 @@ import (
 const gitkeepfile = ".gitkeep"
 
 func TestCreate(t *testing.T) {
-	var generatedpath = "testdata/create/generated"
+	var generatedpath = filepath.Join("testdata", "create", "generated")
 
 	testCases := []struct {
 		src         string
 		expectedErr error
 	}{
-		{"testdata/create/src/empty", nil},
-		{"testdata/create/src/html-but-actually-go", nil},
-		{"testdata/create/src/simple-go", nil},
-		{"testdata/create/src/simple-go-with-draftignore", nil},
-		{"testdata/create/src/simple-go-with-chart", nil},
+		{filepath.Join("testdata", "create", "src", "empty"), nil},
+		{filepath.Join("testdata", "create", "src", "html-but-actually-go"), nil},
+		{filepath.Join("testdata", "create", "src", "simple-go"), nil},
+		{filepath.Join("testdata", "create", "src", "simple-go-with-draftignore"), nil},
+		{filepath.Join("testdata", "create", "src", "simple-go-with-chart"), nil},
 	}
 	for _, tc := range testCases {
 		t.Run(fmt.Sprintf("create %s", tc.src), func(t *testing.T) {
 			pDir, teardown := tempDir(t, "draft-create")
 			defer teardown()
 
-			destcompare := filepath.Join(generatedpath, path.Base(tc.src))
+			destcompare := filepath.Join(generatedpath, filepath.Base(tc.src))
 			helpers.CopyTree(t, tc.src, pDir)
 			// Test
 			create := &createCmd{
 				appName: "myapp",
 				out:     ioutil.Discard,
-				home:    draftpath.Home("testdata/drafthome/"),
+				home:    draftpath.Home(filepath.Join("testdata", "drafthome")),
 				dest:    pDir,
 			}
 			err := create.run()
@@ -76,7 +76,7 @@ func TestNormalizeApplicationName(t *testing.T) {
 			create := &createCmd{
 				appName: tc,
 				out:     os.Stdout,
-				home:    draftpath.Home("../../"),
+				home:    draftpath.Home(filepath.Join("..", "..")),
 				dest:    "",
 			}
 
@@ -88,6 +88,7 @@ func TestNormalizeApplicationName(t *testing.T) {
 
 // tempDir create and clean a temporary directory to work in our tests
 func tempDir(t *testing.T, description string) (string, func()) {
+	t.Helper()
 	path, err := ioutil.TempDir("", description)
 	if err != nil {
 		t.Fatalf("err: %s", err)
@@ -101,6 +102,7 @@ func tempDir(t *testing.T, description string) (string, func()) {
 
 // add .gitkeep to generated empty directories
 func addGitKeep(t *testing.T, p string) {
+	t.Helper()
 	if err := filepath.Walk(p, func(p string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -127,6 +129,7 @@ func addGitKeep(t *testing.T, p string) {
 
 // Compares two strings and asserts equivalence.
 func assertEqualString(t *testing.T, is string, shouldBe string) {
+	t.Helper()
 	if is == shouldBe {
 		return
 	}
@@ -136,6 +139,7 @@ func assertEqualString(t *testing.T, is string, shouldBe string) {
 
 // assertIdentical compares recursively all original and generated file content
 func assertIdentical(t *testing.T, original, generated string) {
+	t.Helper()
 	if err := filepath.Walk(original, func(f string, fi os.FileInfo, err error) error {
 		relp := strings.TrimPrefix(f, original)
 		// root path
@@ -149,6 +153,10 @@ func assertIdentical(t *testing.T, original, generated string) {
 		if filepath.Base(p) == gitkeepfile {
 			return nil
 		}
+
+		// chartdir should match app name, not pack name.
+		re := regexp.MustCompile("(charts.)myapp")
+		p = re.ReplaceAllString(p, "${1}go")
 
 		fo, err := os.Stat(p)
 		if err != nil {
@@ -167,6 +175,7 @@ func assertIdentical(t *testing.T, original, generated string) {
 		if err != nil {
 			t.Fatalf("Couldn't read %s: %v", f, err)
 		}
+		wanted = bytes.Replace(wanted, []byte("name: myapp"), []byte("name: go"), 1)
 		actual, err := ioutil.ReadFile(p)
 		if err != nil {
 			t.Fatalf("Couldn't read %s: %v", p, err)
@@ -188,6 +197,10 @@ func assertIdentical(t *testing.T, original, generated string) {
 		}
 		relp = relp[1:]
 		p := filepath.Join(original, relp)
+
+		// chartdir should match app name, not pack name.
+		re := regexp.MustCompile("(charts.)go")
+		p = re.ReplaceAllString(p, "${1}myapp")
 
 		// .keep files are only for keeping directory creations in remote git repo
 		if filepath.Base(p) == gitkeepfile {

@@ -10,9 +10,9 @@ import (
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"k8s.io/helm/pkg/plugin"
 
 	"github.com/Azure/draft/pkg/draft/draftpath"
+	"github.com/Azure/draft/pkg/plugin"
 )
 
 const (
@@ -105,7 +105,7 @@ func loadPlugins(baseCmd *cobra.Command, home draftpath.Home, out io.Writer, in 
 				// Call setupEnv before PrepareCommand because
 				// PrepareCommand uses os.ExpandEnv and expects the
 				// setupEnv vars.
-				setupPluginEnv(md.Name, plug.Dir, plugdirs, draftpath.Home(homePath()))
+				setupPluginEnv(md.Name, plug.Metadata.Version, plug.Dir, plugdirs, draftpath.Home(homePath()))
 				main, argv := plug.PrepareCommand(u)
 
 				prog := exec.Command(main, argv...)
@@ -176,39 +176,16 @@ func manuallyProcessArgs(args []string) ([]string, []string) {
 	return known, unknown
 }
 
-// runHook will execute a plugin hook.
-func runHook(p *plugin.Plugin, event string) error {
-	hook := p.Metadata.Hooks.Get(event)
-	if hook == "" {
-		return nil
-	}
-
-	prog := exec.Command("sh", "-c", hook)
-
-	debug("running %s hook: %s %v", event, prog.Path, prog.Args)
-
-	home := draftpath.Home(homePath())
-	setupPluginEnv(p.Metadata.Name, p.Dir, home.Plugins(), home)
-	prog.Stdout, prog.Stderr = os.Stdout, os.Stderr
-	if err := prog.Run(); err != nil {
-		if eerr, ok := err.(*exec.ExitError); ok {
-			os.Stderr.Write(eerr.Stderr)
-			return fmt.Errorf("plugin %s hook for %q exited with error", event, p.Metadata.Name)
-		}
-		return err
-	}
-	return nil
-}
-
 // setupPluginEnv prepares os.Env for plugins. It operates on os.Env because
 // the plugin subsystem itself needs access to the environment variables
 // created here.
-func setupPluginEnv(shortname, base, plugdirs string, home draftpath.Home) {
+func setupPluginEnv(shortname, ver, base, plugdirs string, home draftpath.Home) {
 	// Set extra env vars:
 	for key, val := range map[string]string{
-		"DRAFT_PLUGIN_NAME": shortname,
-		"DRAFT_PLUGIN_DIR":  base,
-		"DRAFT_BIN":         os.Args[0],
+		"DRAFT_PLUGIN_NAME":    shortname,
+		"DRAFT_PLUGIN_VERSION": ver,
+		"DRAFT_PLUGIN_DIR":     base,
+		"DRAFT_BIN":            os.Args[0],
 
 		// Set vars that may not have been set, and save client the
 		// trouble of re-parsing.
